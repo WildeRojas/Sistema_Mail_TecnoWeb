@@ -16,9 +16,11 @@ import com.grupo06sa.sistema_inventario.repository.TipoOperacionRepository;
 import com.grupo06sa.sistema_inventario.repository.UsuarioRepository;
 import java.util.List;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "app.seed.enabled", havingValue = "true")
 public class DatabaseSeeder implements CommandLineRunner {
     private final RolRepository rolRepository;
     private final TipoOperacionRepository tipoOperacionRepository;
