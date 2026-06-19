@@ -15,7 +15,15 @@ import com.grupo06sa.sistema_inventario.util.CommandRequest;
 import com.grupo06sa.sistema_inventario.util.HtmlBuilderUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.ConcurrencyFailureException;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionException;
 
 @Service
 public class CommandProcessor {
@@ -202,10 +210,46 @@ public class CommandProcessor {
             };
         } catch (RuntimeException ex) {
             logger.error("Command failed: {}", command, ex);
+            String title = "Error";
             String message = ex.getMessage() != null && !ex.getMessage().isBlank()
-                    ? ex.getMessage()
-                    : "No se pudo procesar el comando.";
-            return CommandResult.text(HtmlBuilderUtil.buildErrorTemplate("Error", message));
+                ? ex.getMessage()
+                : "No se pudo procesar el comando.";
+
+            Throwable current = ex;
+            while (current != null) {
+                if (current instanceof CannotCreateTransactionException
+                    || current instanceof DataAccessResourceFailureException) {
+                    title = "Base de datos no disponible";
+                    message = "No se pudo conectar a la base de datos. Intenta nuevamente mas tarde.";
+                    break;
+                }
+                if (current instanceof QueryTimeoutException) {
+                    title = "Base de datos sin respuesta";
+                    message = "La base de datos tardo demasiado en responder. Intenta nuevamente mas tarde.";
+                    break;
+                }
+                if (current instanceof CannotAcquireLockException
+                    || current instanceof ConcurrencyFailureException) {
+                    title = "Base de datos ocupada";
+                    message = "La base de datos esta procesando otra operacion. Intenta nuevamente.";
+                    break;
+                }
+                if (current instanceof DataIntegrityViolationException) {
+                    title = "Datos no validos";
+                    message = "La base de datos rechazo la operacion porque los datos no cumplen una restriccion.";
+                    break;
+                }
+                if (current instanceof DataAccessException
+                    || current instanceof TransactionException) {
+                    title = "Error de base de datos";
+                    message = "La base de datos no pudo procesar la solicitud. Intenta nuevamente mas tarde.";
+                    break;
+                }
+
+                current = current.getCause();
+            }
+
+            return CommandResult.text(HtmlBuilderUtil.buildErrorTemplate(title, message));
         }
     }
 }
