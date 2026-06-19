@@ -4,6 +4,7 @@ import com.grupo06sa.sistema_inventario.processor.CommandProcessor;
 import com.grupo06sa.sistema_inventario.util.CommandParser;
 import com.grupo06sa.sistema_inventario.util.CommandResult;
 import com.grupo06sa.sistema_inventario.util.CommandRequest;
+import com.grupo06sa.sistema_inventario.util.HtmlBuilderUtil;
 import com.grupo06sa.sistema_inventario.util.MimeDecoderUtil;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -21,9 +22,17 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.ConcurrencyFailureException;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionException;
 
 @Component
 @EnableScheduling
@@ -169,7 +178,41 @@ public class EmailReceiverService {
             response = commandProcessor.process(request, headers.from());
         } catch (Exception ex) {
             logger.warn("Failed to process command: {}", decodedSubject, ex);
-            response = CommandResult.text("Error");
+            String title = "Error";
+            String message = "No se pudo procesar el comando.";
+            Throwable current = ex;
+            while (current != null) {
+                if (current instanceof CannotCreateTransactionException
+                    || current instanceof DataAccessResourceFailureException) {
+                    title = "Base de datos no disponible";
+                    message = "No se pudo conectar a la base de datos. Intenta nuevamente mas tarde.";
+                    break;
+                }
+                if (current instanceof QueryTimeoutException) {
+                    title = "Base de datos sin respuesta";
+                    message = "La base de datos tardo demasiado en responder. Intenta nuevamente mas tarde.";
+                    break;
+                }
+                if (current instanceof CannotAcquireLockException
+                    || current instanceof ConcurrencyFailureException) {
+                    title = "Base de datos ocupada";
+                    message = "La base de datos esta procesando otra operacion. Intenta nuevamente.";
+                    break;
+                }
+                if (current instanceof DataIntegrityViolationException) {
+                    title = "Datos no validos";
+                    message = "La base de datos rechazo la operacion porque los datos no cumplen una restriccion.";
+                    break;
+                }
+                if (current instanceof DataAccessException
+                    || current instanceof TransactionException) {
+                    title = "Error de base de datos";
+                    message = "La base de datos no pudo procesar la solicitud. Intenta nuevamente mas tarde.";
+                    break;
+                }
+                current = current.getCause();
+            }
+            response = CommandResult.text(HtmlBuilderUtil.buildErrorTemplate(title, message));
         }
 
         if (headers.from() != null && !headers.from().isBlank()) {
