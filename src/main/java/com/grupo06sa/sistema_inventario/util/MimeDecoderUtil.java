@@ -1,5 +1,6 @@
 package com.grupo06sa.sistema_inventario.util;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -8,7 +9,7 @@ import java.util.regex.Pattern;
 
 public final class MimeDecoderUtil {
     private static final Pattern ENCODED_WORD =
-        Pattern.compile("=\\?([^?]+)\\?([bBqQ])\\?([^?]+)\\?=");
+        Pattern.compile("=\\?([^?]+)\\?([bBqQ])\\?([^?]*)\\?=");
 
     private MimeDecoderUtil() {
     }
@@ -19,31 +20,68 @@ public final class MimeDecoderUtil {
         }
 
         Matcher matcher = ENCODED_WORD.matcher(value);
-        StringBuffer buffer = new StringBuffer();
-        boolean decodedAny = false;
+        StringBuilder resultado = new StringBuilder();
+        int posicionAnterior = 0;
+        boolean anteriorFueCodificada = false;
 
         while (matcher.find()) {
-            decodedAny = true;
-            String charsetName = matcher.group(1);
-            String encoding = matcher.group(2);
-            String encodedText = matcher.group(3);
-            String decoded = matcher.group(0);
-
-            if ("B".equalsIgnoreCase(encoding)) {
-                try {
-                    byte[] bytes = Base64.getDecoder().decode(encodedText);
-                    Charset charset = toCharset(charsetName);
-                    decoded = new String(bytes, charset);
-                } catch (IllegalArgumentException ex) {
-                    decoded = matcher.group(0);
-                }
+            String entre = value.substring(posicionAnterior, matcher.start());
+            if (!(anteriorFueCodificada && entre.isBlank())) {
+                resultado.append(entre);
             }
 
-            matcher.appendReplacement(buffer, Matcher.quoteReplacement(decoded));
+            resultado.append(decodeWord(matcher.group(1), matcher.group(2), matcher.group(3), matcher.group(0)));
+
+            posicionAnterior = matcher.end();
+            anteriorFueCodificada = true;
         }
 
-        matcher.appendTail(buffer);
-        return decodedAny ? buffer.toString() : value;
+        resultado.append(value.substring(posicionAnterior));
+        return resultado.toString();
+    }
+
+    private static String decodeWord(String charsetName, String encoding, String texto, String original) {
+        Charset charset = toCharset(charsetName);
+        try {
+            if ("B".equalsIgnoreCase(encoding)) {
+                byte[] bytes = Base64.getDecoder().decode(texto);
+                return new String(bytes, charset);
+            }
+            if ("Q".equalsIgnoreCase(encoding)) {
+                return decodeQuotedPrintable(texto, charset);
+            }
+        } catch (IllegalArgumentException ex) {
+            return original;
+        }
+        return original;
+    }
+
+    private static String decodeQuotedPrintable(String texto, Charset charset) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(texto.length());
+        int i = 0;
+        while (i < texto.length()) {
+            char c = texto.charAt(i);
+            if (c == '_') {
+                bytes.write(' ');
+                i++;
+                continue;
+            }
+            if (c == '=' && i + 2 < texto.length()) {
+                String hex = texto.substring(i + 1, i + 3);
+                try {
+                    bytes.write(Integer.parseInt(hex, 16));
+                    i += 3;
+                    continue;
+                } catch (NumberFormatException ex) {
+                    bytes.write(c);
+                    i++;
+                    continue;
+                }
+            }
+            bytes.write(c);
+            i++;
+        }
+        return new String(bytes.toByteArray(), charset);
     }
 
     private static Charset toCharset(String charsetName) {

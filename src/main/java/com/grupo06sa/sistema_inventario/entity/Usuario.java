@@ -7,9 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-import java.util.List;
 
 @Entity
 @Table(name = "Usuario")
@@ -37,18 +35,16 @@ public class Usuario {
     @Column(name = "foto")
     private String foto;
 
+    @Column(name = "activo", nullable = false)
+    private boolean activo = true;
+
     @ManyToOne
     @JoinColumn(name = "rol_id")
     private Rol rol;
 
-    @OneToMany(mappedBy = "usuario")
-    private List<MovimientoInventario> movimientosInventario;
-
-    @OneToMany(mappedBy = "usuario")
-    private List<Pedido> pedidos;
-
-    @OneToMany(mappedBy = "usuario")
-    private List<Compra> compras;
+    @ManyToOne
+    @JoinColumn(name = "proveedor_id")
+    private Proveedor proveedor;
 
     public Long getId() {
         return id;
@@ -106,6 +102,14 @@ public class Usuario {
         this.foto = foto;
     }
 
+    public boolean isActivo() {
+        return activo;
+    }
+
+    public void setActivo(boolean activo) {
+        this.activo = activo;
+    }
+
     public Rol getRol() {
         return rol;
     }
@@ -114,27 +118,11 @@ public class Usuario {
         this.rol = rol;
     }
 
-    public List<MovimientoInventario> getMovimientosInventario() {
-        return movimientosInventario;
+    public Proveedor getProveedor() {
+        return proveedor;
     }
 
-    public void setMovimientosInventario(List<MovimientoInventario> movimientosInventario) {
-        this.movimientosInventario = movimientosInventario;
-    }
-
-    public List<Pedido> getPedidos() {
-        return pedidos;
-    }
-
-    public void setPedidos(List<Pedido> pedidos) {
-        this.pedidos = pedidos;
-    }
-
-    public List<Compra> getCompras() {
-        return compras;
-    }
-
-    public void setCompras(List<Compra> compras) {
-        this.compras = compras;
+    public void setProveedor(Proveedor proveedor) {
+        this.proveedor = proveedor;
     }
 }

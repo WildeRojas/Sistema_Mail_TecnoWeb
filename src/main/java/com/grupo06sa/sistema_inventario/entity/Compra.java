@@ -11,6 +11,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -22,26 +23,36 @@ public class Compra {
     @Column(name = "id")
     private Long id;
 
-    @Column(name = "fecha")
-    private LocalDateTime fecha;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "estado")
-    private Estado estado;
-
-    @Column(name = "total")
-    private Double total;
-
-    @ManyToOne
-    @JoinColumn(name = "usuario_id")
-    private Usuario usuario;
-
     @ManyToOne
     @JoinColumn(name = "proveedor_id")
     private Proveedor proveedor;
 
+    @ManyToOne
+    @JoinColumn(name = "almacen_id")
+    private Almacen almacen;
+
+    @ManyToOne
+    @JoinColumn(name = "solicitud_id")
+    private SolicitudCompra solicitud;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "estado")
+    private EstadoCompra estado = EstadoCompra.PENDIENTE;
+
+    @Column(name = "total")
+    private BigDecimal total = BigDecimal.ZERO;
+
+    @Column(name = "fecha")
+    private LocalDateTime fecha;
+
+    @Column(name = "inventario_ingresado", nullable = false)
+    private boolean inventarioIngresado = false;
+
     @OneToMany(mappedBy = "compra")
-    private List<DetalleCompra> detallesCompra;
+    private List<DetalleCompra> detalles;
+
+    @OneToMany(mappedBy = "compra")
+    private List<Pago> pagos;
 
     public Long getId() {
         return id;
@@ -49,38 +60,6 @@ public class Compra {
 
     public void setId(Long id) {
         this.id = id;
-    }
-
-    public LocalDateTime getFecha() {
-        return fecha;
-    }
-
-    public void setFecha(LocalDateTime fecha) {
-        this.fecha = fecha;
-    }
-
-    public Estado getEstado() {
-        return estado;
-    }
-
-    public void setEstado(Estado estado) {
-        this.estado = estado;
-    }
-
-    public Double getTotal() {
-        return total;
-    }
-
-    public void setTotal(Double total) {
-        this.total = total;
-    }
-
-    public Usuario getUsuario() {
-        return usuario;
-    }
-
-    public void setUsuario(Usuario usuario) {
-        this.usuario = usuario;
     }
 
     public Proveedor getProveedor() {
@@ -91,11 +70,85 @@ public class Compra {
         this.proveedor = proveedor;
     }
 
-    public List<DetalleCompra> getDetallesCompra() {
-        return detallesCompra;
+    public Almacen getAlmacen() {
+        return almacen;
     }
 
-    public void setDetallesCompra(List<DetalleCompra> detallesCompra) {
-        this.detallesCompra = detallesCompra;
+    public void setAlmacen(Almacen almacen) {
+        this.almacen = almacen;
+    }
+
+    public SolicitudCompra getSolicitud() {
+        return solicitud;
+    }
+
+    public void setSolicitud(SolicitudCompra solicitud) {
+        this.solicitud = solicitud;
+    }
+
+    public EstadoCompra getEstado() {
+        return estado;
+    }
+
+    public void setEstado(EstadoCompra estado) {
+        this.estado = estado;
+    }
+
+    public BigDecimal getTotal() {
+        return total;
+    }
+
+    public void setTotal(BigDecimal total) {
+        this.total = total;
+    }
+
+    public LocalDateTime getFecha() {
+        return fecha;
+    }
+
+    public void setFecha(LocalDateTime fecha) {
+        this.fecha = fecha;
+    }
+
+    public boolean isInventarioIngresado() {
+        return inventarioIngresado;
+    }
+
+    public void setInventarioIngresado(boolean inventarioIngresado) {
+        this.inventarioIngresado = inventarioIngresado;
+    }
+
+    public List<DetalleCompra> getDetalles() {
+        return detalles;
+    }
+
+    public void setDetalles(List<DetalleCompra> detalles) {
+        this.detalles = detalles;
+    }
+
+    public List<Pago> getPagos() {
+        return pagos;
+    }
+
+    public void setPagos(List<Pago> pagos) {
+        this.pagos = pagos;
+    }
+
+    public BigDecimal totalPagado() {
+        if (pagos == null || pagos.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+
+        return pagos.stream()
+            .filter(pago -> pago.getEstado() == EstadoPago.PAGADO)
+            .map(Pago::getMonto)
+            .filter(monto -> monto != null)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    public BigDecimal saldo() {
+        BigDecimal totalCompra = total != null ? total : BigDecimal.ZERO;
+        BigDecimal restante = totalCompra.subtract(totalPagado());
+        return restante.max(BigDecimal.ZERO);
     }
 }

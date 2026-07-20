@@ -5,9 +5,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-import java.util.List;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "Almacen")
@@ -21,19 +20,13 @@ public class Almacen {
     private String nombre;
 
     @Column(name = "capacidad")
-    private Integer capacidad;
-
-    @Column(name = "imagen")
-    private String imagen;
+    private BigDecimal capacidad;
 
     @Column(name = "coordenadas_gps")
     private String coordenadasGps;
 
     @Column(name = "direccion")
     private String direccion;
-
-    @OneToMany(mappedBy = "almacen")
-    private List<MovimientoInventario> movimientosInventario;
 
     public Long getId() {
         return id;
@@ -51,20 +44,12 @@ public class Almacen {
         this.nombre = nombre;
     }
 
-    public Integer getCapacidad() {
+    public BigDecimal getCapacidad() {
         return capacidad;
     }
 
-    public void setCapacidad(Integer capacidad) {
+    public void setCapacidad(BigDecimal capacidad) {
         this.capacidad = capacidad;
-    }
-
-    public String getImagen() {
-        return imagen;
-    }
-
-    public void setImagen(String imagen) {
-        this.imagen = imagen;
     }
 
     public String getCoordenadasGps() {
@@ -81,13 +66,5 @@ public class Almacen {
 
     public void setDireccion(String direccion) {
         this.direccion = direccion;
-    }
-
-    public List<MovimientoInventario> getMovimientosInventario() {
-        return movimientosInventario;
-    }
-
-    public void setMovimientosInventario(List<MovimientoInventario> movimientosInventario) {
-        this.movimientosInventario = movimientosInventario;
     }
 }

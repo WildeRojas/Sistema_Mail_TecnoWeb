@@ -1,215 +1,79 @@
 package com.grupo06sa.sistema_inventario.service.command;
 
 import com.grupo06sa.sistema_inventario.entity.Categoria;
-import com.grupo06sa.sistema_inventario.entity.Usuario;
 import com.grupo06sa.sistema_inventario.repository.CategoriaRepository;
-import com.grupo06sa.sistema_inventario.security.RoleAccessDeniedException;
-import com.grupo06sa.sistema_inventario.security.SecurityService;
-import com.grupo06sa.sistema_inventario.security.UserNotFoundException;
+import com.grupo06sa.sistema_inventario.security.ContextoAutenticado;
+import com.grupo06sa.sistema_inventario.util.CommandResult;
 import com.grupo06sa.sistema_inventario.util.HtmlBuilderUtil;
 import java.util.List;
-import java.util.Optional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 @Service
 public class CategoriaCommandService {
-    private static final Logger logger = LoggerFactory.getLogger(CategoriaCommandService.class);
-
-    private final SecurityService securityService;
     private final CategoriaRepository categoriaRepository;
 
-    public CategoriaCommandService(SecurityService securityService, CategoriaRepository categoriaRepository) {
-        this.securityService = securityService;
+    public CategoriaCommandService(CategoriaRepository categoriaRepository) {
         this.categoriaRepository = categoriaRepository;
     }
 
-    public String listarCategorias(List<String> params, String emailRemitente) {
-        String accessError = validateReadAccess(emailRemitente);
-        if (accessError != null) {
-            return accessError;
-        }
-
+    public CommandResult listar(ContextoAutenticado ctx, List<String> params) {
         List<Categoria> categorias = categoriaRepository.findAll();
         if (categorias.isEmpty()) {
-            return HtmlBuilderUtil.buildInfoTemplate("Catalogo", "No hay categorias registradas.");
+            return CommandResult.text(HtmlBuilderUtil.buildInfoTemplate("Categorías", "No hay categorías registradas."));
         }
-
-        return HtmlBuilderUtil.buildCategoriasTable(categorias);
+        return CommandResult.text(HtmlBuilderUtil.buildCategoriasTable(categorias));
     }
 
-    public String obtenerCategoria(List<String> params, String emailRemitente) {
-        String accessError = validateReadAccess(emailRemitente);
-        if (accessError != null) {
-            return accessError;
-        }
-
-        if (params == null || params.isEmpty()) {
-            return HtmlBuilderUtil.buildErrorTemplate("Datos incompletos", "Debe proporcionar el id de la categoria.");
-        }
-
-        Long categoriaId = parseLong(params.get(0));
-        if (categoriaId == null) {
-            return HtmlBuilderUtil.buildErrorTemplate("Formato invalido", "El id de la categoria no es valido.");
-        }
-
-        Optional<Categoria> categoriaOpt = categoriaRepository.findById(categoriaId);
-        if (categoriaOpt.isEmpty()) {
-            return HtmlBuilderUtil.buildErrorTemplate("No encontrado", "La categoria solicitada no existe.");
-        }
-
-        Categoria categoria = categoriaOpt.get();
+    public CommandResult obtener(ContextoAutenticado ctx, List<String> params) {
+        Categoria categoria = obtener(parseLong(params.get(0)));
         StringBuilder detail = new StringBuilder();
         detail.append("ID: ").append(categoria.getId()).append("\n")
             .append("Nombre: ").append(safe(categoria.getNombre())).append("\n")
             .append("Imagen: ").append(safe(categoria.getImagen()));
 
-        return HtmlBuilderUtil.buildPlainTemplate("Categoria", detail.toString());
+        return CommandResult.text(HtmlBuilderUtil.buildPlainTemplate("Categoría", detail.toString()));
     }
 
-    public String insertarCategoria(List<String> params, String emailRemitente) {
-        String accessError = validateAdminAccess(emailRemitente);
-        if (accessError != null) {
-            return accessError;
-        }
-
-        if (params == null || params.size() < 2) {
-            return HtmlBuilderUtil.buildErrorTemplate(
-                "Datos incompletos",
-                "Parametros insuficientes para registrar categoria."
-            );
-        }
-
-        try {
-            Categoria categoria = new Categoria();
-            categoria.setNombre(params.get(0));
-            categoria.setImagen(params.get(1));
-            categoriaRepository.save(categoria);
-            return HtmlBuilderUtil.buildSuccessTemplate("Registro completado", "Categoria registrada correctamente.");
-        } catch (Exception ex) {
-            logger.error("Failed to insert categoria", ex);
-            return HtmlBuilderUtil.buildErrorTemplate("Error", "No se pudo registrar la categoria.");
-        }
+    public CommandResult insertar(ContextoAutenticado ctx, List<String> params) {
+        Categoria categoria = new Categoria();
+        categoria.setNombre(params.get(0));
+        categoria.setImagen(params.size() >= 2 ? params.get(1) : null);
+        categoriaRepository.save(categoria);
+        return CommandResult.text(HtmlBuilderUtil.buildSuccessTemplate("Registro completado", "Categoría registrada correctamente."));
     }
 
-    public String actualizarCategoria(List<String> params, String emailRemitente) {
-        String accessError = validateAdminAccess(emailRemitente);
-        if (accessError != null) {
-            return accessError;
-        }
-
-        if (params == null || params.size() < 3) {
-            return HtmlBuilderUtil.buildErrorTemplate(
-                "Datos incompletos",
-                "Parametros insuficientes para actualizar categoria."
-            );
-        }
-
-        Long categoriaId = parseLong(params.get(0));
-        if (categoriaId == null) {
-            return HtmlBuilderUtil.buildErrorTemplate("Formato invalido", "El id de la categoria no es valido.");
-        }
-
-        Optional<Categoria> categoriaOpt = categoriaRepository.findById(categoriaId);
-        if (categoriaOpt.isEmpty()) {
-            return HtmlBuilderUtil.buildErrorTemplate("No encontrado", "La categoria solicitada no existe.");
-        }
-
-        try {
-            Categoria categoria = categoriaOpt.get();
-            categoria.setNombre(params.get(1));
-            categoria.setImagen(params.get(2));
-            categoriaRepository.save(categoria);
-            return HtmlBuilderUtil.buildSuccessTemplate("Actualizacion completa", "Categoria actualizada correctamente.");
-        } catch (Exception ex) {
-            logger.error("Failed to update categoria", ex);
-            return HtmlBuilderUtil.buildErrorTemplate("Error", "No se pudo actualizar la categoria.");
-        }
+    public CommandResult actualizar(ContextoAutenticado ctx, List<String> params) {
+        Categoria categoria = obtener(parseLong(params.get(0)));
+        categoria.setNombre(params.get(1));
+        categoria.setImagen(params.size() >= 3 ? params.get(2) : categoria.getImagen());
+        categoriaRepository.save(categoria);
+        return CommandResult.text(HtmlBuilderUtil.buildSuccessTemplate("Actualización completa", "Categoría actualizada correctamente."));
     }
 
-    public String eliminarCategoria(List<String> params, String emailRemitente) {
-        String accessError = validateAdminAccess(emailRemitente);
-        if (accessError != null) {
-            return accessError;
-        }
-
-        if (params == null || params.isEmpty()) {
-            return HtmlBuilderUtil.buildErrorTemplate("Datos incompletos", "Debe proporcionar el id de la categoria.");
-        }
-
-        Long categoriaId = parseLong(params.get(0));
-        if (categoriaId == null) {
-            return HtmlBuilderUtil.buildErrorTemplate("Formato invalido", "El id de la categoria no es valido.");
-        }
-
-        Optional<Categoria> categoriaOpt = categoriaRepository.findById(categoriaId);
-        if (categoriaOpt.isEmpty()) {
-            return HtmlBuilderUtil.buildErrorTemplate("No encontrado", "La categoria solicitada no existe.");
-        }
-
+    public CommandResult eliminar(ContextoAutenticado ctx, List<String> params) {
+        Categoria categoria = obtener(parseLong(params.get(0)));
         try {
-            categoriaRepository.delete(categoriaOpt.get());
-            return HtmlBuilderUtil.buildSuccessTemplate("Eliminacion completa", "Categoria eliminada correctamente.");
+            categoriaRepository.delete(categoria);
         } catch (DataIntegrityViolationException ex) {
-            return HtmlBuilderUtil.buildErrorTemplate(
-                "Operacion no permitida",
-                "No se puede eliminar la categoria porque esta relacionada con otros registros."
-            );
-        } catch (Exception ex) {
-            logger.error("Failed to delete categoria", ex);
-            return HtmlBuilderUtil.buildErrorTemplate("Error", "No se pudo eliminar la categoria.");
+            throw new IllegalStateException("No se puede eliminar la categoría porque tiene productos asociados.");
         }
+        return CommandResult.text(HtmlBuilderUtil.buildSuccessTemplate("Eliminación completa", "Categoría eliminada correctamente."));
     }
 
-    private String validateReadAccess(String emailRemitente) {
-        try {
-            Usuario usuario = securityService.authenticateAndCheckRole(emailRemitente, null);
-            if (!isAdminOrCliente(usuario)) {
-                return HtmlBuilderUtil.buildErrorTemplate(
-                    "Privilegios insuficientes",
-                    "Solo un ADMINISTRADOR o CLIENTE puede ejecutar este comando."
-                );
-            }
-            return null;
-        } catch (UserNotFoundException ex) {
-            return HtmlBuilderUtil.buildAccessDeniedTemplate();
-        }
-    }
-
-    private String validateAdminAccess(String emailRemitente) {
-        try {
-            securityService.authenticateAndCheckRole(emailRemitente, "ADMINISTRADOR");
-            return null;
-        } catch (UserNotFoundException ex) {
-            return HtmlBuilderUtil.buildAccessDeniedTemplate();
-        } catch (RoleAccessDeniedException ex) {
-            return HtmlBuilderUtil.buildErrorTemplate(
-                "Privilegios insuficientes",
-                "Solo un ADMINISTRADOR puede ejecutar este comando."
-            );
-        }
-    }
-
-    private boolean isAdminOrCliente(Usuario usuario) {
-        if (usuario == null || usuario.getRol() == null || usuario.getRol().getNombre() == null) {
-            return false;
-        }
-
-        String roleName = usuario.getRol().getNombre();
-        return "ADMINISTRADOR".equalsIgnoreCase(roleName) || "CLIENTE".equalsIgnoreCase(roleName);
+    private Categoria obtener(Long id) {
+        return categoriaRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("La categoría solicitada no existe."));
     }
 
     private Long parseLong(String value) {
         if (value == null || value.isBlank()) {
-            return null;
+            throw new IllegalArgumentException("Debe proporcionar un id numérico válido.");
         }
-
         try {
-            return Long.parseLong(value);
+            return Long.parseLong(value.trim());
         } catch (NumberFormatException ex) {
-            return null;
+            throw new IllegalArgumentException("El id proporcionado no es válido.");
         }
     }
 

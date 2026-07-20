@@ -1,0 +1,21 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "(?i).*login.*"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "error": 0,
+      "message": "login",
+      "accessToken": "test-access-token",
+      "values": {
+        "accessToken": "test-access-token",
+        "token": "test-access-token"
+      }
+    }
+  }
+}

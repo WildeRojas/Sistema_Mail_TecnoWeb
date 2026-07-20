@@ -1,115 +1,57 @@
 package com.grupo06sa.sistema_inventario.service.command;
 
-import com.grupo06sa.sistema_inventario.security.RoleAccessDeniedException;
-import com.grupo06sa.sistema_inventario.security.SecurityService;
-import com.grupo06sa.sistema_inventario.security.UserNotFoundException;
+import com.grupo06sa.sistema_inventario.security.ContextoAutenticado;
+import com.grupo06sa.sistema_inventario.security.RolNombre;
 import com.grupo06sa.sistema_inventario.service.ReporteService;
 import com.grupo06sa.sistema_inventario.util.CommandResult;
 import com.grupo06sa.sistema_inventario.util.EmailAttachment;
 import com.grupo06sa.sistema_inventario.util.HtmlBuilderUtil;
 import java.time.YearMonth;
-import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ReporteCommandService {
-    private static final DateTimeFormatter MONTH_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM");
-
     private final ReporteService reporteService;
-    private final SecurityService securityService;
 
-    public ReporteCommandService(ReporteService reporteService, SecurityService securityService) {
+    public ReporteCommandService(ReporteService reporteService) {
         this.reporteService = reporteService;
-        this.securityService = securityService;
     }
 
-    public CommandResult reporteInventario(List<String> params, String emailRemitente) {
-        String accessError = validateAdminAccess(emailRemitente);
-        if (accessError != null) {
-            return CommandResult.text(accessError);
-        }
-
-        if (params != null && !params.isEmpty() && !"*".equals(params.get(0))) {
-            return CommandResult.text(
-                HtmlBuilderUtil.buildErrorTemplate("Formato invalido", "Use REP_INVENTARIO[\"*\"].")
-            );
-        }
-
+    public CommandResult reporteInventario(ContextoAutenticado ctx, List<String> params) {
         ReporteService.ReporteData data = reporteService.generarInventario();
         if (data.getPdf() == null || data.getCount() == 0) {
-            return CommandResult.text(
-                HtmlBuilderUtil.buildInfoTemplate("Sin datos", "No hay productos para reportar.")
-            );
+            return CommandResult.text(HtmlBuilderUtil.buildInfoTemplate("Sin datos", "No hay productos para reportar."));
         }
 
-        EmailAttachment attachment = new EmailAttachment(
-            data.getFileName(),
-            "application/pdf",
-            data.getPdf()
-        );
-        String body = HtmlBuilderUtil.buildSuccessTemplate(
-            "Reporte generado",
-            "Se adjunta el reporte de inventario."
-        );
+        EmailAttachment attachment = new EmailAttachment(data.getFileName(), "application/pdf", data.getPdf());
+        String body = HtmlBuilderUtil.buildSuccessTemplate("Reporte generado", "Se adjunta el reporte de inventario.");
         return CommandResult.withAttachment(body, attachment);
     }
 
-    public CommandResult reporteVentas(List<String> params, String emailRemitente) {
-        String accessError = validateAdminAccess(emailRemitente);
-        if (accessError != null) {
-            return CommandResult.text(accessError);
-        }
+    public CommandResult reporteCompras(ContextoAutenticado ctx, List<String> params) {
+        YearMonth mes = parseMes(params.get(0));
+        Long proveedorFiltro = ctx.getRol() == RolNombre.PROVEEDOR ? ctx.getProveedorId() : null;
 
-        if (params == null || params.isEmpty()) {
-            return CommandResult.text(
-                HtmlBuilderUtil.buildErrorTemplate("Datos incompletos", "Debe proporcionar YYYY-MM.")
-            );
-        }
-
-        YearMonth month;
-        try {
-            month = YearMonth.parse(params.get(0), MONTH_FORMAT);
-        } catch (DateTimeParseException ex) {
-            return CommandResult.text(
-                HtmlBuilderUtil.buildErrorTemplate("Formato invalido", "Use YYYY-MM (ej: 2026-05).")
-            );
-        }
-
-        ReporteService.ReporteData data = reporteService.generarVentas(month);
+        ReporteService.ReporteData data = reporteService.generarCompras(mes, proveedorFiltro);
         if (data.getPdf() == null || data.getCount() == 0) {
-            return CommandResult.text(
-                HtmlBuilderUtil.buildInfoTemplate(
-                    "Sin ventas",
-                    "No hay pedidos PAGADOS para el mes solicitado."
-                )
-            );
+            return CommandResult.text(HtmlBuilderUtil.buildInfoTemplate("Sin datos", "No hay compras registradas para " + mes + "."));
         }
 
-        EmailAttachment attachment = new EmailAttachment(
-            data.getFileName(),
-            "application/pdf",
-            data.getPdf()
-        );
-        String body = HtmlBuilderUtil.buildSuccessTemplate(
-            "Reporte generado",
-            "Se adjunta el reporte de ventas del mes " + month + "."
-        );
+        EmailAttachment attachment = new EmailAttachment(data.getFileName(), "application/pdf", data.getPdf());
+        String body = HtmlBuilderUtil.buildSuccessTemplate("Reporte generado", "Se adjunta el reporte de compras de " + mes + ".");
         return CommandResult.withAttachment(body, attachment);
     }
 
-    private String validateAdminAccess(String emailRemitente) {
+    private YearMonth parseMes(String valor) {
+        if (valor == null || valor.isBlank()) {
+            throw new IllegalArgumentException("Debe indicar el mes en formato YYYY-MM.");
+        }
         try {
-            securityService.authenticateAndCheckRole(emailRemitente, "ADMINISTRADOR");
-            return null;
-        } catch (UserNotFoundException ex) {
-            return HtmlBuilderUtil.buildAccessDeniedTemplate();
-        } catch (RoleAccessDeniedException ex) {
-            return HtmlBuilderUtil.buildErrorTemplate(
-                "Privilegios insuficientes",
-                "Solo un ADMINISTRADOR puede ejecutar este comando."
-            );
+            return YearMonth.parse(valor.trim());
+        } catch (DateTimeParseException ex) {
+            throw new IllegalArgumentException("El mes debe tener el formato YYYY-MM.");
         }
     }
 }

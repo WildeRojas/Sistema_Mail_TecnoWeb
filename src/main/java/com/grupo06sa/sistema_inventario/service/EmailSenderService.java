@@ -14,11 +14,14 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 @Service
 public class EmailSenderService {
     private static final Logger logger = LoggerFactory.getLogger(EmailSenderService.class);
+    private static final int MAX_INTENTOS = 3;
+    private static final long ESPERA_BASE_MS = 500L;
 
     @Value("${mail.server}")
     private String mailServer;
@@ -31,6 +34,12 @@ public class EmailSenderService {
 
     @Value("${mail.password}")
     private String mailPassword;
+
+    private final MailSpoolService mailSpoolService;
+
+    public EmailSenderService(MailSpoolService mailSpoolService) {
+        this.mailSpoolService = mailSpoolService;
+    }
 
     public void sendEmail(String to, String subject, String body) {
         sendEmailInternal(to, subject, body, null);
@@ -52,14 +61,65 @@ public class EmailSenderService {
 
     private void sendEmailInternal(String to, String subject, String body, EmailAttachment attachment) {
         if (to == null || to.isBlank()) {
-            throw new IllegalArgumentException("Recipient is empty");
+            throw new IllegalArgumentException("El destinatario del correo está vacío.");
         }
 
+        IOException ultimoError = null;
+        for (int intento = 1; intento <= MAX_INTENTOS; intento++) {
+            try {
+                enviarPorSocket(to, subject, body, attachment);
+                logger.info("Correo enviado a {}", to);
+                return;
+            } catch (IOException ex) {
+                ultimoError = ex;
+                logger.warn(
+                    "Intento {}/{} de envío SMTP fallido hacia {}: {}",
+                    intento, MAX_INTENTOS, to, ex.getMessage()
+                );
+                if (intento < MAX_INTENTOS) {
+                    esperarBackoff(intento);
+                }
+            }
+        }
+
+        logger.error(
+            "SMTP no disponible tras {} intentos hacia {}; el correo se conserva en el spool local para reintento.",
+            MAX_INTENTOS, to, ultimoError
+        );
+        mailSpoolService.encolar(to, subject, body, attachment);
+    }
+
+    private void esperarBackoff(int intentoActual) {
+        long esperaMs = ESPERA_BASE_MS * (1L << (intentoActual - 1));
+        try {
+            Thread.sleep(esperaMs);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${mail.sender.spool.flush-delay-ms:60000}")
+    public void flushSpool() {
+        for (MailSpoolService.MensajePendiente pendiente : mailSpoolService.listarPendientes()) {
+            try {
+                enviarPorSocket(pendiente.to(), pendiente.subject(), pendiente.body(), pendiente.attachment());
+                mailSpoolService.eliminar(pendiente.archivo());
+                logger.info("Correo pendiente del spool enviado con éxito hacia {}", pendiente.to());
+            } catch (IOException ex) {
+                logger.warn(
+                    "Reintento de spool aún sin éxito hacia {}; se reintentará en el próximo ciclo: {}",
+                    pendiente.to(), ex.getMessage()
+                );
+            }
+        }
+    }
+
+    private void enviarPorSocket(String to, String subject, String body, EmailAttachment attachment) throws IOException {
         String fromAddress = buildFromAddress();
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(mailServer, smtpPort), 10000);
             socket.setSoTimeout(15000);
-            logger.info(
+            logger.debug(
                 "SMTP conectado: local={} -> {}:{}",
                 socket.getLocalAddress().getHostAddress(),
                 mailServer,
@@ -77,10 +137,9 @@ public class EmailSenderService {
             ) {
                 expectCode(reader, 220);
                 if (!sendEhlo(reader, writer)) {
-                    throw new IOException("SMTP server rejected EHLO/HELO");
+                    throw new IOException("El servidor SMTP rechazó EHLO/HELO");
                 }
 
-                //authenticate(reader, writer);
                 sendCommand(writer, "MAIL FROM:<" + fromAddress + ">");
                 expectCode(reader, 250);
                 sendCommand(writer, "RCPT TO:<" + to + ">");
@@ -91,7 +150,7 @@ public class EmailSenderService {
                 String normalizedBody = normalizeBody(body);
                 writer.print("From: " + fromAddress + "\r\n");
                 writer.print("To: " + to + "\r\n");
-                writer.print("Subject: " + safe(subject) + "\r\n");
+                writer.print("Subject: " + stripCrlf(safe(subject)) + "\r\n");
 
                 if (attachment == null) {
                     writer.print("Content-Type: text/html; charset=UTF-8\r\n");
@@ -109,7 +168,7 @@ public class EmailSenderService {
                     writer.print(normalizedBody);
                     writer.print("\r\n");
 
-                    String fileName = safe(attachment.getFileName());
+                    String fileName = escapeQuotedString(attachment.getFileName());
                     String contentType = safe(attachment.getContentType());
                     if (contentType.isBlank()) {
                         contentType = "application/octet-stream";
@@ -134,9 +193,6 @@ public class EmailSenderService {
                 sendCommand(writer, "QUIT");
                 expectCode(reader, 221);
             }
-        } catch (IOException ex) {
-            logger.error("Failed to send SMTP message to {}", to, ex);
-            throw new IllegalStateException("SMTP send failed", ex);
         }
     }
 
@@ -160,10 +216,10 @@ public class EmailSenderService {
     private int readResponse(BufferedReader reader) throws IOException {
         String line = reader.readLine();
         if (line == null) {
-            throw new IOException("SMTP connection closed by server");
+            throw new IOException("El servidor SMTP cerró la conexión");
         }
 
-        logger.info("SERVIDOR RESPONDE: {}", line);
+        logger.debug("SMTP <= {}", line);
 
         int code = parseCode(line);
         if (line.length() > 3 && line.charAt(3) == '-') {
@@ -186,7 +242,7 @@ public class EmailSenderService {
             }
         }
 
-        throw new IOException("Unexpected SMTP response code: " + code);
+        throw new IOException("Código de respuesta SMTP inesperado: " + code);
     }
 
     private int parseCode(String line) {
@@ -253,6 +309,15 @@ public class EmailSenderService {
         return value == null ? "" : value;
     }
 
+    private String stripCrlf(String value) {
+        return value.replace("\r", " ").replace("\n", " ");
+    }
+
+    private String escapeQuotedString(String value) {
+        String sinSaltos = stripCrlf(safe(value));
+        return sinSaltos.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     private void logCommand(String command) {
         String masked = command;
         if (command.startsWith("AUTH")
@@ -261,6 +326,6 @@ public class EmailSenderService {
             masked = "[oculto]";
         }
 
-        logger.info("CLIENTE ENVIA: {}", masked);
+        logger.debug("SMTP => {}", masked);
     }
 }

@@ -1,0 +1,20 @@
+{
+  "scenarioName": "pago",
+  "requiredScenarioState": "PAGADO",
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "(?i).*(query.*transaction|consultarestado).*"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "error": 0,
+      "values": {
+        "paymentStatus": 2
+      }
+    }
+  }
+}

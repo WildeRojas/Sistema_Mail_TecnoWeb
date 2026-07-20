@@ -1,140 +1,266 @@
 package com.grupo06sa.sistema_inventario.service;
 
+import com.grupo06sa.sistema_inventario.entity.AlertaStock;
 import com.grupo06sa.sistema_inventario.entity.Almacen;
+import com.grupo06sa.sistema_inventario.entity.Compra;
+import com.grupo06sa.sistema_inventario.entity.EstadoAlerta;
+import com.grupo06sa.sistema_inventario.entity.Inventario;
 import com.grupo06sa.sistema_inventario.entity.MovimientoInventario;
 import com.grupo06sa.sistema_inventario.entity.Producto;
 import com.grupo06sa.sistema_inventario.entity.TipoOperacion;
 import com.grupo06sa.sistema_inventario.entity.Usuario;
-import com.grupo06sa.sistema_inventario.repository.AlmacenRepository;
+import com.grupo06sa.sistema_inventario.repository.AlertaStockRepository;
+import com.grupo06sa.sistema_inventario.repository.InventarioRepository;
 import com.grupo06sa.sistema_inventario.repository.MovimientoInventarioRepository;
-import com.grupo06sa.sistema_inventario.repository.ProductoRepository;
 import com.grupo06sa.sistema_inventario.repository.TipoOperacionRepository;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class InventarioService {
+    private final InventarioRepository inventarioRepository;
+    private final MovimientoInventarioRepository movimientoRepository;
     private final TipoOperacionRepository tipoOperacionRepository;
-    private final AlmacenRepository almacenRepository;
-    private final MovimientoInventarioRepository movimientoInventarioRepository;
-    private final ProductoRepository productoRepository;
+    private final AlertaStockRepository alertaStockRepository;
 
     public InventarioService(
+        InventarioRepository inventarioRepository,
+        MovimientoInventarioRepository movimientoRepository,
         TipoOperacionRepository tipoOperacionRepository,
-        AlmacenRepository almacenRepository,
-        MovimientoInventarioRepository movimientoInventarioRepository,
-        ProductoRepository productoRepository
+        AlertaStockRepository alertaStockRepository
     ) {
+        this.inventarioRepository = inventarioRepository;
+        this.movimientoRepository = movimientoRepository;
         this.tipoOperacionRepository = tipoOperacionRepository;
-        this.almacenRepository = almacenRepository;
-        this.movimientoInventarioRepository = movimientoInventarioRepository;
-        this.productoRepository = productoRepository;
+        this.alertaStockRepository = alertaStockRepository;
     }
 
-    public void registrarEntrada(
-        Usuario usuario,
-        Producto producto,
-        int cantidad,
-        double costoUnitario,
-        LocalDateTime fecha
-    ) {
-        validarMovimiento(producto, cantidad);
-        TipoOperacion tipo = resolveTipoOperacion("INGRESO");
-        Almacen almacen = resolveAlmacen();
-
-        int stockActual = safeStock(producto.getStockActual());
-        producto.setStockActual(stockActual + cantidad);
-        productoRepository.save(producto);
-
-        guardarMovimiento(usuario, producto, cantidad, costoUnitario, fecha, tipo, almacen);
+    public BigDecimal stockTotal(Producto producto) {
+        return inventarioRepository.findByProductoId(producto.getId()).stream()
+            .map(Inventario::getCantidad)
+            .filter(cantidad -> cantidad != null)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    public void registrarSalida(
-        Usuario usuario,
-        Producto producto,
-        int cantidad,
-        double costoUnitario,
-        LocalDateTime fecha
-    ) {
-        validarMovimiento(producto, cantidad);
-        TipoOperacion tipo = resolveTipoOperacion("SALIDA");
-        Almacen almacen = resolveAlmacen();
+    public BigDecimal ocupacion(Almacen almacen) {
+        return inventarioRepository.findByAlmacenId(almacen.getId()).stream()
+            .map(Inventario::getCantidad)
+            .filter(cantidad -> cantidad != null)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
 
-        int stockActual = safeStock(producto.getStockActual());
-        if (stockActual < cantidad) {
-            throw new IllegalStateException("Stock insuficiente para " + safe(producto.getNombre()) + ".");
+    @Transactional
+    public MovimientoInventario registrarIngreso(
+        Producto producto,
+        Almacen almacen,
+        BigDecimal cantidad,
+        Compra compra,
+        Usuario usuario,
+        String observacion
+    ) {
+        validarPositiva(cantidad);
+        validarCapacidad(almacen, cantidad);
+
+        Inventario inventario = obtenerOCrear(producto, almacen);
+        inventario.setCantidad(inventario.getCantidad().add(cantidad));
+        inventarioRepository.save(inventario);
+
+        MovimientoInventario movimiento = nuevoMovimiento(producto, cantidad, usuario, observacion);
+        movimiento.setTipoOperacion(resolveTipoOperacion("INGRESO"));
+        movimiento.setAlmacenDestino(almacen);
+        movimiento.setCompra(compra);
+        return movimientoRepository.save(movimiento);
+    }
+
+    @Transactional
+    public MovimientoInventario registrarSalida(
+        Producto producto,
+        Almacen almacen,
+        BigDecimal cantidad,
+        Usuario usuario,
+        String observacion
+    ) {
+        validarPositiva(cantidad);
+
+        Inventario inventario = obtenerOCrear(producto, almacen);
+        if (inventario.getCantidad().compareTo(cantidad) < 0) {
+            throw new IllegalStateException(
+                "Stock insuficiente de " + safe(producto.getNombre()) + " en " + safe(almacen.getNombre()) + "."
+            );
         }
 
-        producto.setStockActual(stockActual - cantidad);
-        productoRepository.save(producto);
+        inventario.setCantidad(inventario.getCantidad().subtract(cantidad));
+        inventarioRepository.save(inventario);
 
-        guardarMovimiento(usuario, producto, cantidad, costoUnitario, fecha, tipo, almacen);
+        MovimientoInventario movimiento = nuevoMovimiento(producto, cantidad, usuario, observacion);
+        movimiento.setTipoOperacion(resolveTipoOperacion("SALIDA"));
+        movimiento.setAlmacenOrigen(almacen);
+        MovimientoInventario guardado = movimientoRepository.save(movimiento);
+
+        evaluarAlerta(producto, almacen);
+        return guardado;
     }
 
-    public void registrarTraslado(
+    @Transactional
+    public MovimientoInventario registrarAjuste(
+        Producto producto,
+        Almacen almacen,
+        BigDecimal delta,
         Usuario usuario,
+        String observacion
+    ) {
+        if (delta == null || delta.compareTo(BigDecimal.ZERO) == 0) {
+            throw new IllegalStateException("El ajuste debe tener una cantidad distinta de cero.");
+        }
+
+        Inventario inventario = obtenerOCrear(producto, almacen);
+        BigDecimal resultante = inventario.getCantidad().add(delta);
+        if (resultante.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalStateException("El ajuste dejaría stock negativo para " + safe(producto.getNombre()) + ".");
+        }
+        if (delta.compareTo(BigDecimal.ZERO) > 0) {
+            validarCapacidad(almacen, delta);
+        }
+
+        inventario.setCantidad(resultante);
+        inventarioRepository.save(inventario);
+
+        MovimientoInventario movimiento = nuevoMovimiento(producto, delta.abs(), usuario, observacion);
+        movimiento.setTipoOperacion(resolveTipoOperacion("AJUSTE"));
+        if (delta.compareTo(BigDecimal.ZERO) > 0) {
+            movimiento.setAlmacenDestino(almacen);
+        } else {
+            movimiento.setAlmacenOrigen(almacen);
+        }
+        MovimientoInventario guardado = movimientoRepository.save(movimiento);
+
+        if (delta.compareTo(BigDecimal.ZERO) < 0) {
+            evaluarAlerta(producto, almacen);
+        }
+        return guardado;
+    }
+
+    @Transactional
+    public MovimientoInventario trasladar(
         Producto producto,
         Almacen origen,
         Almacen destino,
-        int cantidad,
-        double costoUnitario,
-        LocalDateTime fecha
+        BigDecimal cantidad,
+        Usuario usuario
     ) {
-        validarMovimiento(producto, cantidad);
         if (origen == null || destino == null || origen.getId() == null || destino.getId() == null) {
-            throw new IllegalStateException("Almacen invalido para traslado.");
+            throw new IllegalStateException("Debe indicar almacén de origen y destino válidos.");
         }
+        if (origen.getId().equals(destino.getId())) {
+            throw new IllegalStateException("El almacén de origen y destino deben ser diferentes.");
+        }
+        validarPositiva(cantidad);
 
-        TipoOperacion tipo = resolveTipoOperacion("TRASLADO");
-        // Registra dos movimientos para rastrear origen y destino del traslado.
-        guardarMovimiento(usuario, producto, -cantidad, costoUnitario, fecha, tipo, origen);
-        guardarMovimiento(usuario, producto, cantidad, costoUnitario, fecha, tipo, destino);
+        Inventario inventarioOrigen = obtenerOCrear(producto, origen);
+        if (inventarioOrigen.getCantidad().compareTo(cantidad) < 0) {
+            throw new IllegalStateException("Stock insuficiente en " + safe(origen.getNombre()) + " para trasladar.");
+        }
+        validarCapacidad(destino, cantidad);
+
+        inventarioOrigen.setCantidad(inventarioOrigen.getCantidad().subtract(cantidad));
+        inventarioRepository.save(inventarioOrigen);
+
+        Inventario inventarioDestino = obtenerOCrear(producto, destino);
+        inventarioDestino.setCantidad(inventarioDestino.getCantidad().add(cantidad));
+        inventarioRepository.save(inventarioDestino);
+
+        MovimientoInventario movimiento = nuevoMovimiento(producto, cantidad, usuario, null);
+        movimiento.setTipoOperacion(resolveTipoOperacion("TRASLADO"));
+        movimiento.setAlmacenOrigen(origen);
+        movimiento.setAlmacenDestino(destino);
+        MovimientoInventario guardado = movimientoRepository.save(movimiento);
+
+        evaluarAlerta(producto, origen);
+        return guardado;
     }
 
-    private void validarMovimiento(Producto producto, int cantidad) {
-        if (producto == null || producto.getId() == null) {
-            throw new IllegalStateException("Producto invalido para movimiento de inventario.");
+    private void evaluarAlerta(Producto producto, Almacen almacenContexto) {
+        BigDecimal stockMinimo = producto.getStockMinimo();
+        if (stockMinimo == null) {
+            return;
         }
-        if (cantidad <= 0) {
-            throw new IllegalStateException("Cantidad invalida para movimiento de inventario.");
+
+        BigDecimal total = stockTotal(producto);
+        if (total.compareTo(stockMinimo) > 0) {
+            return;
         }
+
+        List<AlertaStock> pendientes = alertaStockRepository
+            .findByProductoIdAndEstado(producto.getId(), EstadoAlerta.PENDIENTE);
+        if (!pendientes.isEmpty()) {
+            AlertaStock existente = pendientes.get(0);
+            existente.setCantidadActual(total);
+            alertaStockRepository.save(existente);
+            return;
+        }
+
+        AlertaStock alerta = new AlertaStock();
+        alerta.setProducto(producto);
+        alerta.setAlmacen(almacenContexto);
+        alerta.setCantidadActual(total);
+        alerta.setStockMinimo(stockMinimo);
+        alerta.setEstado(EstadoAlerta.PENDIENTE);
+        alerta.setCreatedAt(LocalDateTime.now());
+        alertaStockRepository.save(alerta);
+    }
+
+    private void validarCapacidad(Almacen almacen, BigDecimal cantidadAdicional) {
+        BigDecimal capacidad = almacen.getCapacidad();
+        if (capacidad == null || capacidad.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+
+        BigDecimal ocupacionActual = ocupacion(almacen);
+        if (ocupacionActual.add(cantidadAdicional).compareTo(capacidad) > 0) {
+            throw new IllegalStateException(
+                "La operación excede la capacidad del almacén " + safe(almacen.getNombre()) + "."
+            );
+        }
+    }
+
+    private Inventario obtenerOCrear(Producto producto, Almacen almacen) {
+        return inventarioRepository.findByProductoIdAndAlmacenId(producto.getId(), almacen.getId())
+            .orElseGet(() -> {
+                Inventario nuevo = new Inventario();
+                nuevo.setProducto(producto);
+                nuevo.setAlmacen(almacen);
+                nuevo.setCantidad(BigDecimal.ZERO);
+                return nuevo;
+            });
+    }
+
+    private MovimientoInventario nuevoMovimiento(
+        Producto producto,
+        BigDecimal cantidad,
+        Usuario usuario,
+        String observacion
+    ) {
+        MovimientoInventario movimiento = new MovimientoInventario();
+        movimiento.setProducto(producto);
+        movimiento.setCantidad(cantidad);
+        movimiento.setFecha(LocalDateTime.now());
+        movimiento.setUsuario(usuario);
+        movimiento.setObservacion(observacion);
+        return movimiento;
     }
 
     private TipoOperacion resolveTipoOperacion(String nombre) {
         return tipoOperacionRepository.findByNombreIgnoreCase(nombre)
-            .orElseThrow(() -> new IllegalStateException(
-                "No existe tipo de operacion " + nombre + "."
-            ));
+            .orElseThrow(() -> new IllegalStateException("No existe el tipo de operación " + nombre + "."));
     }
 
-    private Almacen resolveAlmacen() {
-        return almacenRepository.findAll().stream()
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException("No hay almacen configurado."));
-    }
-
-    private void guardarMovimiento(
-        Usuario usuario,
-        Producto producto,
-        int cantidad,
-        double costoUnitario,
-        LocalDateTime fecha,
-        TipoOperacion tipoOperacion,
-        Almacen almacen
-    ) {
-        MovimientoInventario movimiento = new MovimientoInventario();
-        movimiento.setFechaMovimiento(fecha);
-        movimiento.setCostoUnitario(costoUnitario);
-        movimiento.setCantidad(cantidad);
-        movimiento.setUsuario(usuario);
-        movimiento.setProducto(producto);
-        movimiento.setAlmacen(almacen);
-        movimiento.setTipoOperacion(tipoOperacion);
-        movimientoInventarioRepository.save(movimiento);
-    }
-
-    private int safeStock(Integer value) {
-        return value != null ? value : 0;
+    private void validarPositiva(BigDecimal cantidad) {
+        if (cantidad == null || cantidad.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalStateException("La cantidad debe ser mayor a 0.");
+        }
     }
 
     private String safe(String value) {

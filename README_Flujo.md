@@ -1,120 +1,171 @@
-# Flujo del sistema inventario
+# Flujos de negocio — Sistema Mail Tiendas Junior
 
-## Formato de comandos
+Este documento describe los flujos de negocio de punta a punta soportados por el sistema: inventario,
+ofertas y compras a proveedores, pagos y reportes. No existe flujo de venta a cliente final ni rol
+CLIENTE: todo el negocio es B2B, entre Tiendas Junior (PROPIETARIO/TRABAJADOR) y sus proveedores
+(PROVEEDOR). El catálogo exacto de comandos usado en cada paso está en
+[README_Comandos.md](README_Comandos.md).
 
-- Los comandos se envian en el asunto del correo.
-- Formato: COMANDO["param1","param2",...]
-- Los parametros siempre van entre comillas dobles.
-- Los datos se guardan exactamente como se escriben (acepta caracteres especiales, tildes, etc.).
+## Alta de usuarios
 
-## Registro de cliente nuevo (cualquier persona)
+No existe auto-registro. Un correo enviado desde una dirección no registrada (o desde una cuenta
+inactiva) siempre recibe la misma plantilla: debe contactar al propietario del negocio para que lo
+registre. El PROPIETARIO da de alta usuarios con `INS_USUARIO`, indicando el rol (`PROPIETARIO`,
+`TRABAJADOR` o `PROVEEDOR`); si el rol es `PROVEEDOR`, el usuario queda asociado a un proveedor
+existente (`id_proveedor` obligatorio en ese caso) y solo podrá operar sobre los datos de ese proveedor.
 
-- Cualquier persona que no este registrada puede auto-registrarse como CLIENTE.
-- Enviar: `REGISTRO_CLIENTE["nombre","apellido","contrasena","telefono"]`
-- El email del remitente se toma automaticamente como email de la cuenta.
-- Si ya tiene cuenta con ese email, el sistema lo informa.
-- Si el usuario envia cualquier otro comando sin estar registrado, recibe un correo automatico explicandole como registrarse con `REGISTRO_CLIENTE`.
+## Alta de ofertas por proveedor
 
-## Flujo de venta con Pago Facil (cliente)
+Cada proveedor gestiona, desde su propio correo registrado, el catálogo de productos internos que está
+dispuesto a abastecer y a qué costo:
 
-1) Crear pedido
-- Enviar: `INS_PEDIDO["direccion"]`
-- Estado inicial: PENDIENTE
+1. El proveedor envía `INS_OFERTA["id_producto","costo_unitario","tiempo_reposicion_dias?","cantidad_minima?"]`.
+   No puede registrar dos ofertas para el mismo producto: si ya existe una, debe usar `UPD_OFERTA`.
+2. Para ajustar costo, tiempo de reposición, cantidad mínima o disponibilidad, envía
+   `UPD_OFERTA["id_oferta","costo_unitario","tiempo_reposicion_dias?","cantidad_minima?","disponible(SI|NO)?"]`.
+   Al actualizar el costo, el sistema conserva el costo anterior junto al nuevo (histórico de precio de
+   oferta) y registra el momento del cambio.
+3. `DEL_OFERTA["id_oferta"]` elimina la oferta.
+4. `LIS_OFERTA[""]` lista únicamente las ofertas propias del proveedor que envía el correo.
 
-2) Agregar detalles
-- Enviar: `INS_DETALLE["id_pedido","id_producto","cantidad"]`
-- Se acumula el total del pedido
+Un mismo producto interno puede ser ofertado por varios proveedores a distinto costo, o ser exclusivo de
+uno solo; ambos casos son válidos y se usan, por ejemplo, para decidir a quién comprarle.
 
-3) Solicitar pago (QR)
-- Enviar: `PAGAR_PEDIDO["id_pedido","metodo_pago"]`
-- El sistema genera el QR con Pago Facil, cambia el pedido a ESPERANDO_PAGO
-- Se responde con un correo que incluye la imagen del QR desencriptada en Base64
+## Comparación de ofertas
 
-4) Confirmacion de pago (webhook)
-- Pago Facil envia un POST a `/api/pagofacil/webhook`
-- Si el pago es exitoso:
-  - El pedido pasa a PAGADO
-  - Se descuenta stock y se registra movimiento SALIDA
-  - Se envia el comprobante de pago/factura al cliente por correo
+El PROPIETARIO compara todas las ofertas vigentes de un producto con `COMPARAR_OFERTAS["id_producto"]`:
+el sistema devuelve las ofertas ordenadas por costo, señalando la mejor oferta disponible. Este comando
+es puramente informativo: no crea ni modifica ningún registro.
 
-5) Comprobacion de pago manual (comando)
-- Enviar: `COMPROBAR_PAGO["id_pedido","numero_cuenta_destinatario","monto_cancelado"]`
-- Valida que el pedido pertenezca al remitente, este en ESPERANDO_PAGO y el monto coincida
-- Si es exitoso:
-  - Registra el pago en el sistema
-  - El pedido pasa a PAGADO
-  - Se descuenta el stock correspondiente y se registra movimiento SALIDA
-  - Se envia el comprobante de pago al cliente por correo
+## Solicitud de compra y atención del proveedor
 
-## Flujo de compra e interacción con Proveedores (admin y proveedor)
+Antes de comprometer una compra formal, el PROPIETARIO puede pedirle a un proveedor una cotización o
+disponibilidad concreta:
 
-1) Crear compra (admin)
-- Enviar: `INS_COMPRA["id_proveedor"]`
-- Estado inicial: PENDIENTE
+1. `INS_SOLICITUD["id_proveedor","id_producto","cantidad","id_almacen"]` — requiere que el proveedor
+   tenga una oferta disponible para ese producto (si no la tiene, se rechaza). Queda en estado
+   `PENDIENTE` con un costo estimado (calculado con el costo de la oferta vigente) y se notifica al
+   proveedor por correo.
+2. El proveedor responde con una de dos acciones, siempre sobre solicitudes dirigidas a él:
+   - `ATENDER_SOLICITUD["id_solicitud","costo_ofrecido"]` → la solicitud pasa a `ATENDIDA`.
+   - `RECHAZAR_SOLICITUD["id_solicitud","motivo"]` → la solicitud pasa a `RECHAZADA`.
+3. `LIS_SOLICITUD[""]` es el mismo comando para PROPIETARIO y PROVEEDOR: el PROPIETARIO ve todas las
+   solicitudes, el PROVEEDOR solo las que le corresponden.
 
-2) Agregar detalles (admin)
-- Enviar: `INS_DETALLE_COMPRA["id_compra","id_producto","cantidad","precio_compra"]`
-- No afecta el stock todavia
+Una solicitud ya `ATENDIDA` o `RECHAZADA` no puede volver a atenderse ni rechazarse.
 
-3) Finalizar compra (admin)
-- Enviar: `FINALIZAR_COMPRA["id_compra"]`
-- Calcula el total acumulado de la compra y cambia su estado a EN_ESPERA
-- Envia automaticamente un correo al proveedor asociado con el detalle de la orden en HTML
+Cuando el PROPIETARIO crea una compra (`INS_COMPRA`) para un proveedor que tiene exactamente una
+solicitud en estado `ATENDIDA` pendiente de convertir, el sistema la enlaza automáticamente a la nueva
+compra y la marca `CONVERTIDA`.
 
-4) Consultar ordenes pendientes (proveedor)
-- Enviar: `VER_MIS_ORDENES["*"]` desde el correo registrado del proveedor
-- El sistema responde con el listado en formato HTML de todas sus compras pendientes en estado EN_ESPERA
+## Compra: creación, detalle, finalización y recepción
 
-5) Confirmar entrega de productos (proveedor)
-- Enviar: `CONFIRMAR_ENTREGA["id_compra"]` desde el correo registrado del proveedor
-- Valida que la compra pertenezca al proveedor remitente y este en estado EN_ESPERA
-- Si es valido:
-  - Se suma el stock de cada producto y se registran los movimientos de INGRESO (ENTRADA) en el inventario
-  - La compra cambia a estado ENTREGADO
-  - Se envia una notificacion automatica por correo a todos los administradores
+El ciclo de vida de una compra tiene cuatro pasos, todos ejecutados por el PROPIETARIO:
 
-## Alertas proactivas de stock minimo
+1. **Creación** — `INS_COMPRA["id_proveedor","id_almacen"]`. Requiere que el proveedor tenga al menos
+   una oferta disponible. Queda en estado `PENDIENTE`, con almacén de destino ya definido (el almacén
+   donde se recibirá la mercadería).
+2. **Detalle (snapshot de costo)** — `INS_DETALLE_COMPRA["id_compra","id_oferta","cantidad"]`, repetido
+   por cada producto. La oferta debe pertenecer al proveedor de la compra y estar disponible. El costo
+   unitario de la oferta se copia como una fotografía inmutable dentro del detalle: si el proveedor
+   actualiza después el costo de su oferta, los detalles ya agregados no cambian.
+3. **Finalización** — `FINALIZAR_COMPRA["id_compra"]`. Exige que la compra tenga al menos un detalle.
+   Calcula el total sumando los subtotales, cambia el estado a `EN_ESPERA` y envía automáticamente al
+   proveedor, por correo, la orden de compra con el detalle completo.
+4. **Recepción** — `RECIBIR_COMPRA["id_compra"]`. Solo procede si la compra está `EN_ESPERA`. Ingresa al
+   inventario del almacén de destino la cantidad de cada detalle, registra un movimiento `INGRESO` por
+   cada producto (asociado a la compra) y cambia el estado a `RECIBIDA`; notifica a todos los usuarios
+   PROPIETARIO activos. Es **idempotente**: si la compra ya tiene el inventario ingresado
+   (`inventarioIngresado=true`), repetir el comando no vuelve a sumar stock ni a duplicar movimientos.
 
-- Cuando el pago final descuenta stock y deja el valor <= stock_minimo,
-  se envia un correo automatico al ADMINISTRADOR.
+`LIS_COMPRA[""]` y `GET_COMPRA["id"]` están disponibles también para el PROVEEDOR, restringidos a sus
+propias compras (ownership por `proveedor_id`).
 
-## Reportes PDF (admin)
+Los estados `RECIBIDA` y `PAGADA` de una compra son independientes entre sí y pueden darse en cualquier
+orden: una compra puede pagarse antes o después de recibirse.
 
-- `REP_INVENTARIO["*"]`: productos, stock actual, stock minimo y categoria.
-- `REP_VENTAS["YYYY-MM"]`: pedidos PAGADOS del mes y total de ingresos.
+## Pago a proveedor con QR Pago Fácil
 
-## Traslados internos (admin)
+1. `PAGAR_COMPRA["id_compra"]` (PROPIETARIO) genera un código QR de cobro a través de Pago Fácil por el
+   saldo pendiente de la compra (total menos lo ya pagado). Si había un pago `PENDIENTE` previo de la
+   misma compra, se descarta antes de crear el nuevo. Se crea un registro `Pago` en estado `PENDIENTE`
+   con referencia `TJ{id_compra}-{id_pago}`, se persisten el `transactionId` y la fecha de vencimiento
+   devueltos por Pago Fácil, y se responde por correo con la imagen del QR adjunta (PNG).
+2. **Confirmación por callback** — Pago Fácil notifica el resultado mediante:
 
-- `TRASLADO_STOCK["id_producto","id_almacen_origen","id_almacen_destino","cantidad"]`
-- Valida almacenes distintos y cantidad > 0
-- Registra movimiento TRASLADO
+   ```
+   POST /pagos/pagofacil/callback
+   ```
 
-## Almacenes (admin)
+   Endpoint público, sin autenticación ni rol, exento de CSRF. Contrato exacto:
+   - Solo se procesa si el campo `Estado` (o `estado`) llega igual a **2**; cualquier otro valor se
+     responde igual mas sin ningún efecto.
+   - La referencia del pago se busca, en orden de prioridad, en `PedidoID`, `pedidoId` o
+     `paymentNumber`; si ninguno viene informado, se usa `transaccion` para buscar por `transactionId`.
+   - No se leen ni validan monto, fecha, hora ni método de pago del payload.
+   - Si el pago existe y aún no estaba `PAGADO`, se marca `PAGADO` (con lock pesimista sobre la fila),
+     se guarda la fecha de pago y una versión saneada del payload (sin secretos); se recarga la compra y,
+     si el total pagado ya cubre el total de la compra, la compra pasa a `PAGADA`. El callback nunca
+     toca inventario ni envía correos dentro de su propia transacción.
+   - La respuesta HTTP es **siempre** `200 OK` con el mismo cuerpo JSON, exista o no el pago, y aunque
+     `Estado` sea distinto de 2:
+     ```json
+     {"error":0,"status":1,"message":"Notificación recibida","values":true}
+     ```
+     Cualquier fallo interno solo se registra en el log; nunca cambia la respuesta.
+   - Idempotencia: la transición a `PAGADO` está protegida por el chequeo de estado, restricciones
+     `UNIQUE` sobre referencia y `transactionId`, y el lock pesimista, de modo que dos callbacks
+     concurrentes para el mismo pago producen una única transición.
+3. `VERIFICAR_PAGO["id_compra"]` (PROPIETARIO; PROVEEDOR solo sobre sus propias compras) consulta de
+   forma activa el estado de la transacción ante Pago Fácil (fuera del callback) y, si Pago Fácil
+   confirma el pago, aplica la misma lógica de marcado que el callback.
+4. `LIS_PAGO[""]` — PROPIETARIO ve todos los pagos; PROVEEDOR solo los recibidos por sus propias
+   compras.
 
-- Crear: `INS_ALMACEN["nombre","capacidad","direccion","coordenadas_gps"]`
-- Ver: `GET_ALMACEN["id"]`
-- Listar: `LIS_ALMACEN["*"]`
-- Actualizar: `UPD_ALMACEN["id","nombre","capacidad","direccion","coordenadas_gps"]`
-- Eliminar: `DEL_ALMACEN["id"]`
+El pago nunca mueve inventario: la recepción de mercadería (`RECIBIR_COMPRA`) y el pago
+(`PAGAR_COMPRA`/callback) son procesos independientes.
 
-## Gestion de Proveedores (admin)
+## Alertas de stock
 
-- Listar: `LIS_PROVEEDOR["*"]`
-- Ver detalle: `GET_PROVEEDOR["id"]`
-- Registrar: `INS_PROVEEDOR["nombre","telefono","correo","direccion"]`
-- Actualizar: `UPD_PROVEEDOR["id","nombre","telefono","correo","direccion"]`
-- Eliminar: `DEL_PROVEEDOR["id"]`
+Cada vez que una salida, un ajuste negativo o un traslado deja el stock total de un producto (sumado en
+todos los almacenes) por debajo o igual a su stock mínimo configurado, el sistema genera una alerta
+automática (`AlertaStock`), sin necesidad de ningún comando. No se crea una alerta nueva si ya existe una
+pendiente para el mismo producto. El PROPIETARIO o TRABAJADOR consulta las alertas pendientes con
+`LIS_ALERTA[""]` y las marca resueltas con `ATENDER_ALERTA["id_alerta"]`.
 
-## Gestion de Usuarios (admin)
+## Traslados internos de stock
 
-- Listar: `LIS_USUARIO["*"]`
-- Ver detalle: `GET_USUARIO["id"]`
-- Registrar: `INS_USUARIO["nombre","apellido","contrasena","telefono","email","foto","rol"]`
-  - *Validación*: Si el parámetro `email` contiene algún espacio en blanco, el comando lanzará un error y detendrá la inserción.
-- Actualizar: `UPD_USUARIO["id","nombre","apellido","contrasena","telefono","email","foto","rol"]`
-- Eliminar: `DEL_USUARIO["id"]`
+`TRASLADO_STOCK["id_producto","id_almacen_origen","id_almacen_destino","cantidad"]` (PROPIETARIO,
+TRABAJADOR) mueve stock real entre dos almacenes distintos: descuenta del almacén de origen (verificando
+que haya stock suficiente), sube en el almacén de destino (verificando su capacidad si tiene un límite
+configurado) y registra un único movimiento de tipo `TRASLADO`. Puede disparar una alerta de stock sobre
+el almacén de origen si el traslado deja el producto por debajo de su mínimo.
 
-Nota: Los comandos `LIS_USUARIO` y `GET_USUARIO` están ocultos en el menú de `HELP` de los clientes por motivos de seguridad, siendo visibles únicamente para el rol `ADMINISTRADOR`.
+## Reportes
 
-Nota: Los datos se insertan exactamente como se escriben. Acepta caracteres especiales, tildes y símbolos.
+- `REP_INVENTARIO[""]` (PROPIETARIO, TRABAJADOR): PDF con el catálogo de productos, su stock por
+  almacén, stock mínimo y categoría.
+- `REP_COMPRAS["YYYY-MM"]` (PROPIETARIO; PROVEEDOR con una variante filtrada a sus propias compras):
+  PDF con las compras del mes indicado.
 
+Si no hay datos para el período solicitado, o el formato del mes es inválido, el sistema responde con un
+mensaje de error en español y no adjunta ningún archivo.
+
+## Aislamiento por proveedor
+
+Un usuario con rol PROVEEDOR nunca puede indicar `id_proveedor` como parámetro en los comandos
+restringidos a su propio ámbito (ofertas, solicitudes, compras, pagos, reportes de compras): el
+proveedor se toma siempre del contexto autenticado del remitente, nunca de un parámetro del correo. La
+separación se aplica en tres capas:
+
+1. **Comando**: el catálogo (`ComandoRegistry`) marca cada comando restringido (`scopedPorProveedor`);
+   el `CommandProcessor` propaga el `proveedorId` del contexto autenticado a la capa de servicio.
+2. **Servicio**: los listados reciben el `proveedorId` y filtran (por ejemplo `LIS_COMPRA`, `LIS_PAGO`,
+   `LIS_OFERTA`, `LIS_SOLICITUD`); el acceso a un recurso puntual por id (`GET_COMPRA`,
+   `VERIFICAR_PAGO`, `ATENDER_SOLICITUD`, etc.) verifica ownership y rechaza el acceso si el recurso
+   pertenece a otro proveedor.
+3. **Repositorio**: las consultas usadas en las ramas de rol PROVEEDOR reciben el `proveedorId`
+   explícito en la firma del método (por ejemplo `findByProveedorId`, `findByCompraProveedorId`), nunca
+   un `findAll()` sin filtrar.
+
+Ver la matriz completa de comandos por rol en [docs/matriz-roles.md](docs/matriz-roles.md).

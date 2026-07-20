@@ -34,3 +34,10 @@ build/
 
 ### Application Configuration ###
 **/application.properties
+
+### Infraestructura local de pruebas (agente E: H2/GreenMail/WireMock embebidos) ###
+.local-validation/
+test-results/
+/spool/
+spool-test/
+*.eml

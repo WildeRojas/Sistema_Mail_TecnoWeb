@@ -7,9 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-import java.util.List;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "Producto")
@@ -19,20 +18,17 @@ public class Producto {
     @Column(name = "id")
     private Long id;
 
-    @Column(name = "codigo")
+    @Column(name = "codigo", unique = true)
     private String codigo;
 
     @Column(name = "nombre")
     private String nombre;
 
-    @Column(name = "precio")
-    private Double precio;
-
-    @Column(name = "stock_actual")
-    private Integer stockActual;
+    @Column(name = "costo_unitario")
+    private BigDecimal costoUnitario;
 
     @Column(name = "stock_minimo")
-    private Integer stockMinimo;
+    private BigDecimal stockMinimo = BigDecimal.ZERO;
 
     @Column(name = "imagen")
     private String imagen;
@@ -40,19 +36,6 @@ public class Producto {
     @ManyToOne
     @JoinColumn(name = "categoria_id")
     private Categoria categoria;
-
-    @ManyToOne
-    @JoinColumn(name = "proveedor_id")
-    private Proveedor proveedor;
-
-    @OneToMany(mappedBy = "producto")
-    private List<MovimientoInventario> movimientosInventario;
-
-    @OneToMany(mappedBy = "producto")
-    private List<DetalleCompra> detallesCompra;
-
-    @OneToMany(mappedBy = "producto")
-    private List<DetallePedido> detallesPedido;
 
     public Long getId() {
         return id;
@@ -78,27 +61,19 @@ public class Producto {
         this.nombre = nombre;
     }
 
-    public Double getPrecio() {
-        return precio;
+    public BigDecimal getCostoUnitario() {
+        return costoUnitario;
     }
 
-    public void setPrecio(Double precio) {
-        this.precio = precio;
+    public void setCostoUnitario(BigDecimal costoUnitario) {
+        this.costoUnitario = costoUnitario;
     }
 
-    public Integer getStockActual() {
-        return stockActual;
-    }
-
-    public void setStockActual(Integer stockActual) {
-        this.stockActual = stockActual;
-    }
-
-    public Integer getStockMinimo() {
+    public BigDecimal getStockMinimo() {
         return stockMinimo;
     }
 
-    public void setStockMinimo(Integer stockMinimo) {
+    public void setStockMinimo(BigDecimal stockMinimo) {
         this.stockMinimo = stockMinimo;
     }
 
@@ -116,37 +91,5 @@ public class Producto {
 
     public void setCategoria(Categoria categoria) {
         this.categoria = categoria;
-    }
-
-    public Proveedor getProveedor() {
-        return proveedor;
-    }
-
-    public void setProveedor(Proveedor proveedor) {
-        this.proveedor = proveedor;
-    }
-
-    public List<MovimientoInventario> getMovimientosInventario() {
-        return movimientosInventario;
-    }
-
-    public void setMovimientosInventario(List<MovimientoInventario> movimientosInventario) {
-        this.movimientosInventario = movimientosInventario;
-    }
-
-    public List<DetalleCompra> getDetallesCompra() {
-        return detallesCompra;
-    }
-
-    public void setDetallesCompra(List<DetalleCompra> detallesCompra) {
-        this.detallesCompra = detallesCompra;
-    }
-
-    public List<DetallePedido> getDetallesPedido() {
-        return detallesPedido;
-    }
-
-    public void setDetallesPedido(List<DetallePedido> detallesPedido) {
-        this.detallesPedido = detallesPedido;
     }
 }

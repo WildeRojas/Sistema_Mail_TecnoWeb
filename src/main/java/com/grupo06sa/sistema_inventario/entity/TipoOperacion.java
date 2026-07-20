@@ -5,9 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-import java.util.List;
 
 @Entity
 @Table(name = "Tipo_Operacion")
@@ -19,9 +17,6 @@ public class TipoOperacion {
 
     @Column(name = "nombre")
     private String nombre;
-
-    @OneToMany(mappedBy = "tipoOperacion")
-    private List<MovimientoInventario> movimientosInventario;
 
     public Long getId() {
         return id;
@@ -37,13 +32,5 @@ public class TipoOperacion {
 
     public void setNombre(String nombre) {
         this.nombre = nombre;
-    }
-
-    public List<MovimientoInventario> getMovimientosInventario() {
-        return movimientosInventario;
-    }
-
-    public void setMovimientosInventario(List<MovimientoInventario> movimientosInventario) {
-        this.movimientosInventario = movimientosInventario;
     }
 }
